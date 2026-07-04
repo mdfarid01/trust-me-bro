@@ -1,0 +1,7 @@
+{
+  "/api/auth/nonce/route": "app/api/auth/nonce/route.js",
+  "/api/auth/verify/route": "app/api/auth/verify/route.js",
+  "/api/users/borrowers/route": "app/api/users/borrowers/route.js",
+  "/api/loans/route": "app/api/loans/route.js",
+  "/page": "app/page.js"
+}

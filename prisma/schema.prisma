@@ -1,0 +1,61 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+enum LoanStatus {
+  PENDING
+  ACCEPTED
+  REPAID
+  CANCELLED
+}
+
+model User {
+  id            String       @id @default(cuid())
+  walletAddress String       @unique
+  username      String?
+  createdAt     DateTime     @default(now())
+  loansLent     Loan[]       @relation("LoanLender")
+  loansBorrowed Loan[]       @relation("LoanBorrower")
+  trustEvents   TrustEvent[]
+  trustScore    TrustScore?
+}
+
+model Loan {
+  id          String       @id @default(cuid())
+  lenderId    String
+  borrowerId  String
+  amount      Float
+  reason      String
+  dueDate     DateTime
+  status      LoanStatus   @default(PENDING)
+  txSignature String?
+  createdAt   DateTime     @default(now())
+  acceptedAt  DateTime?
+  repaidAt    DateTime?
+  lender      User         @relation("LoanLender", fields: [lenderId], references: [id])
+  borrower    User         @relation("LoanBorrower", fields: [borrowerId], references: [id])
+  trustEvents TrustEvent[]
+}
+
+model TrustEvent {
+  id        String   @id @default(cuid())
+  userId    String
+  delta     Int
+  reason    String
+  loanId    String?
+  createdAt DateTime @default(now())
+  user      User     @relation(fields: [userId], references: [id])
+  loan      Loan?    @relation(fields: [loanId], references: [id])
+}
+
+model TrustScore {
+  userId         String   @id @unique
+  score          Int      @default(50)
+  agreementCount Int      @default(0)
+  updatedAt      DateTime @updatedAt
+  user           User     @relation(fields: [userId], references: [id])
+}

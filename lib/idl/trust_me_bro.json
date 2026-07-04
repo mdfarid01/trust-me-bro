@@ -1,0 +1,87 @@
+{
+  "version": "0.1.0",
+  "name": "trust_me_bro",
+  "instructions": [
+    {
+      "name": "createLoan",
+      "accounts": [
+        { "name": "loan", "isMut": true, "isSigner": false },
+        { "name": "lender", "isMut": true, "isSigner": true },
+        { "name": "borrower", "isMut": false, "isSigner": false },
+        { "name": "systemProgram", "isMut": false, "isSigner": false }
+      ],
+      "args": [
+        { "name": "loanId", "type": "u64" },
+        { "name": "amount", "type": "u64" },
+        { "name": "reason", "type": "string" },
+        { "name": "dueDate", "type": "i64" }
+      ]
+    },
+    {
+      "name": "acceptLoan",
+      "accounts": [
+        { "name": "loan", "isMut": true, "isSigner": false },
+        { "name": "signer", "isMut": false, "isSigner": true }
+      ],
+      "args": []
+    },
+    {
+      "name": "repayLoan",
+      "accounts": [
+        { "name": "loan", "isMut": true, "isSigner": false },
+        { "name": "signer", "isMut": false, "isSigner": true }
+      ],
+      "args": []
+    },
+    {
+      "name": "cancelLoan",
+      "accounts": [
+        { "name": "loan", "isMut": true, "isSigner": false },
+        { "name": "signer", "isMut": false, "isSigner": true }
+      ],
+      "args": []
+    }
+  ],
+  "accounts": [
+    {
+      "name": "LoanAccount",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          { "name": "lender", "type": "publicKey" },
+          { "name": "borrower", "type": "publicKey" },
+          { "name": "amount", "type": "u64" },
+          { "name": "reason", "type": "string" },
+          { "name": "dueDate", "type": "i64" },
+          { "name": "status", "type": { "defined": "LoanStatus" } },
+          { "name": "createdAt", "type": "i64" },
+          { "name": "bump", "type": "u8" }
+        ]
+      }
+    }
+  ],
+  "types": [
+    {
+      "name": "LoanStatus",
+      "type": {
+        "kind": "enum",
+        "variants": [
+          { "name": "Pending" },
+          { "name": "Accepted" },
+          { "name": "Repaid" },
+          { "name": "Cancelled" }
+        ]
+      }
+    }
+  ],
+  "errors": [
+    { "code": 6000, "name": "InvalidAmount", "msg": "Amount must be greater than zero" },
+    { "code": 6001, "name": "SameLenderBorrower", "msg": "Lender and borrower cannot be the same" },
+    { "code": 6002, "name": "ReasonTooLong", "msg": "Reason must be 128 characters or less" },
+    { "code": 6003, "name": "InvalidStatus", "msg": "Invalid loan status for this operation" },
+    { "code": 6004, "name": "Unauthorized", "msg": "Unauthorized" }
+  ],
+  "metadata": {
+    "address": "62x4fhaFhshjbsMvvgP4oyTqiGRftqQGQLr5JMidWPXk"
+  }
+}
