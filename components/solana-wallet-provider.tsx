@@ -13,7 +13,7 @@ export function SolanaWalletProvider({ children }: SolanaWalletProviderProps) {
 
   return (
     <ConnectionProvider endpoint={endpoint}>
-      <WalletProvider wallets={[]} autoConnect>
+      <WalletProvider wallets={[]} autoConnect={true}>
         {children}
       </WalletProvider>
     </ConnectionProvider>

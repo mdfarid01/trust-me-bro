@@ -3,7 +3,9 @@
 import { PublicKey, type Transaction, type VersionedTransaction } from "@solana/web3.js";
 import {
   Brain,
+  Check,
   CheckCircle2,
+  Copy,
   ExternalLink,
   Inbox,
   Loader2,
@@ -30,6 +32,7 @@ type Agreement = {
   repaidAt: string | null;
   repaymentMarked: boolean;
   txSignature: string | null;
+  inviteToken: string | null;
   lender: {
     username: string | null;
   };
@@ -186,10 +189,50 @@ function EmptyState() {
   );
 }
 
+function ProofLink({ txSignature }: { txSignature: string }) {
+  return (
+    <a
+      className="inline-flex items-center gap-1.5 text-xs text-[var(--muted)] hover:text-[var(--text)]"
+      href={`https://explorer.solana.com/tx/${txSignature}?cluster=devnet`}
+      rel="noreferrer"
+      target="_blank"
+    >
+      View proof on Solana
+      <ExternalLink className="h-3 w-3" aria-hidden="true" />
+    </a>
+  );
+}
+
+function InviteLinkButton({ inviteToken }: { inviteToken: string }) {
+  const [isCopied, setIsCopied] = useState(false);
+
+  async function copyInviteLink() {
+    await navigator.clipboard.writeText(`${window.location.origin}/invite/${inviteToken}`);
+    setIsCopied(true);
+    window.setTimeout(() => setIsCopied(false), 1800);
+  }
+
+  return (
+    <button
+      className="inline-flex items-center gap-1.5 text-xs text-[var(--muted)] hover:text-[var(--text)]"
+      onClick={copyInviteLink}
+      type="button"
+    >
+      {isCopied ? (
+        <Check className="h-3 w-3 text-[var(--green)]" aria-hidden="true" />
+      ) : (
+        <Copy className="h-3 w-3" aria-hidden="true" />
+      )}
+      {isCopied ? "Copied" : "Copy invite link"}
+    </button>
+  );
+}
+
 function AgreementRow({
   agreement,
   acceptingAgreementId,
   confirmingAgreementId,
+  disableActions = false,
   explainingAgreementId,
   explanations,
   onAccept,
@@ -197,11 +240,13 @@ function AgreementRow({
   onExplain,
   onRepay,
   repayingAgreementId,
+  showInviteLink = false,
   userId,
 }: {
   agreement: Agreement;
   acceptingAgreementId: string | null;
   confirmingAgreementId: string | null;
+  disableActions?: boolean;
   explainingAgreementId: string | null;
   explanations: Record<string, string>;
   onAccept: (agreementId: string) => void;
@@ -209,20 +254,27 @@ function AgreementRow({
   onExplain: (agreementId: string) => void;
   onRepay: (agreementId: string) => void;
   repayingAgreementId: string | null;
+  showInviteLink?: boolean;
   userId: string;
 }) {
   const direction = getAgreementDirection(agreement, userId);
-  const canAccept = agreement.status === "PENDING" && agreement.borrowerId === userId;
+  const canAccept =
+    !disableActions && agreement.status === "PENDING" && agreement.borrowerId === userId;
   const canMarkRepaid =
+    !disableActions &&
     agreement.status === "ACCEPTED" &&
     agreement.borrowerId === userId &&
     !agreement.repaymentMarked;
   const canConfirm =
+    !disableActions &&
     agreement.status === "ACCEPTED" &&
     agreement.lenderId === userId &&
     agreement.repaymentMarked;
-  const canExplain = agreement.status === "REPAID";
-  const hasAction = canAccept || canMarkRepaid || canConfirm || canExplain || agreement.txSignature;
+  const canExplain = !disableActions && agreement.status === "REPAID";
+  const hasProof = agreement.txSignature !== null;
+  const hasInviteLink = showInviteLink && agreement.inviteToken !== null;
+  const hasAction =
+    canAccept || canMarkRepaid || canConfirm || canExplain || hasProof || hasInviteLink;
 
   return (
     <article className="border-t border-[var(--border)] py-5 transition hover:bg-[rgba(255,255,255,0.015)]">
@@ -301,16 +353,16 @@ function AgreementRow({
             </TextAction>
           ) : null}
 
-          {agreement.txSignature ? (
-            <a
-              className="ml-auto inline-flex items-center gap-1.5 text-xs text-[var(--muted)] hover:text-[var(--text)]"
-              href={`https://explorer.solana.com/tx/${agreement.txSignature}?cluster=devnet`}
-              rel="noreferrer"
-              target="_blank"
-            >
-              View proof on Solana
-              <ExternalLink className="h-3 w-3" aria-hidden="true" />
-            </a>
+          {agreement.txSignature !== null ? (
+            <span className="ml-auto">
+              <ProofLink txSignature={agreement.txSignature} />
+            </span>
+          ) : null}
+
+          {showInviteLink && agreement.inviteToken !== null ? (
+            <span className={agreement.txSignature === null ? "ml-auto" : ""}>
+              <InviteLinkButton inviteToken={agreement.inviteToken} />
+            </span>
           ) : null}
         </div>
       ) : null}
@@ -335,11 +387,13 @@ function AgreementSection({
   confirmingAgreementId: string | null;
   explainingAgreementId: string | null;
   explanations: Record<string, string>;
+  disableActions?: boolean;
   onAccept: (agreementId: string) => void;
   onConfirm: (agreementId: string) => void;
   onExplain: (agreementId: string) => void;
   onRepay: (agreementId: string) => void;
   repayingAgreementId: string | null;
+  showInviteLink?: boolean;
   userId: string;
 }) {
   return (
@@ -388,24 +442,20 @@ export function AgreementsDashboard({
   const [explanations, setExplanations] = useState<Record<string, string>>({});
   const [error, setError] = useState<string | null>(null);
 
+  const sentAgreements = useMemo(
+    () => groups.pending.filter((agreement) => agreement.lenderId === user.id),
+    [groups.pending, user.id],
+  );
+
   const awaitingAction = useMemo(
     () =>
-      groups.pending.filter((agreement) => agreement.borrowerId === user.id).concat(
-        groups.accepted.filter(
-          (agreement) =>
-            agreement.lenderId === user.id && agreement.repaymentMarked,
-        ),
-      ),
-    [groups.accepted, groups.pending, user.id],
+      groups.pending.filter((agreement) => agreement.borrowerId === user.id),
+    [groups.pending, user.id],
   );
 
   const inProgress = useMemo(
-    () =>
-      groups.accepted.filter(
-        (agreement) =>
-          !(agreement.lenderId === user.id && agreement.repaymentMarked),
-      ),
-    [groups.accepted, user.id],
+    () => groups.accepted,
+    [groups.accepted],
   );
 
   async function loadAgreements() {
@@ -692,6 +742,13 @@ export function AgreementsDashboard({
       ) : null}
 
       <div className="grid gap-12">
+        <AgreementSection
+          agreements={sentAgreements}
+          disableActions={true}
+          showInviteLink={true}
+          title="Sent — waiting for response"
+          {...rowProps}
+        />
         <AgreementSection
           agreements={awaitingAction}
           title="Awaiting action"

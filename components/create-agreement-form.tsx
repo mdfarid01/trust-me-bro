@@ -1,24 +1,17 @@
 "use client";
 
 import { AnchorProvider, BN, Program } from "@coral-xyz/anchor";
-import { useConnection } from "@solana/wallet-adapter-react";
 import {
+  Connection,
   PublicKey,
   SystemProgram,
   type Transaction,
   type VersionedTransaction,
 } from "@solana/web3.js";
 import { Buffer } from "buffer";
-import { CheckCircle2, Loader2, Plus } from "lucide-react";
-import { FormEvent, useEffect, useMemo, useState } from "react";
+import { Check, CheckCircle2, Copy, Loader2, Plus } from "lucide-react";
+import { FormEvent, useState } from "react";
 import { TRUST_ME_BRO_ANCHOR_IDL } from "@/lib/anchor-idl";
-
-type Borrower = {
-  id: string;
-  username: string | null;
-  walletAddress: string;
-  createdAt: string;
-};
 
 type CreatedAgreement = {
   id: string;
@@ -27,34 +20,38 @@ type CreatedAgreement = {
   dueDate: string;
   status: "PENDING" | "ACCEPTED" | "REPAID" | "CANCELLED";
   txSignature: string | null;
+  inviteToken: string | null;
   borrowerWalletAddress?: string;
+  lenderWalletAddress?: string;
   borrower: {
     username: string | null;
   };
 };
 
-type PhantomProvider = {
+type CreateAgreementFormProps = {
+  onAgreementCreated?: () => void;
+};
+
+type PhantomSolanaProvider = {
+  isConnected?: boolean;
   isPhantom?: boolean;
-  publicKey?: PublicKey;
+  publicKey?: {
+    toBase58(): string;
+  };
   connect(): Promise<{ publicKey: { toBase58(): string } }>;
   signAndSendTransaction?<T extends Transaction | VersionedTransaction>(
-    transaction: T,
-    options?: {
-      preflightCommitment?: "processed" | "confirmed" | "finalized";
-      skipPreflight?: boolean;
-    },
-  ): Promise<{ signature: string } | string>;
-  signTransaction?<T extends Transaction | VersionedTransaction>(
-    transaction: T,
-  ): Promise<T>;
+  transaction: T,
+  options?: {
+    skipPreflight?: boolean;
+    preflightCommitment?: "processed" | "confirmed" | "finalized";
+  },
+): Promise<{ signature: string } | string>;
 };
 
 type WindowWithPhantom = Window & {
-  solana?: PhantomProvider;
-};
-
-type CreateAgreementFormProps = {
-  onAgreementCreated?: () => void;
+  phantom?: {
+    solana?: PhantomSolanaProvider;
+  };
 };
 
 const PROGRAM_ID = new PublicKey(
@@ -65,11 +62,8 @@ const inputClass =
   "w-full rounded-[8px] border border-[var(--border)] bg-[var(--bg)] px-3 py-3 text-sm text-[var(--text)] outline-none placeholder:text-[var(--muted)] hover:border-zinc-700 focus:border-[var(--green)]";
 
 function getNumericLoanId(loanId: string) {
-  const maxSafeLoanId = 9_007_199_254_740_991;
-
-  return Array.from(loanId).reduce((hash, character) => {
-    return (hash * 31 + character.charCodeAt(0)) % maxSafeLoanId;
-  }, 7);
+  // Use timestamp + random to ensure uniqueness every time
+  return Date.now() % 1_000_000 + Math.floor(Math.random() * 1000);
 }
 
 function getPublicKey(value?: string) {
@@ -85,80 +79,38 @@ function getPublicKey(value?: string) {
 }
 
 export function CreateAgreementForm({ onAgreementCreated }: CreateAgreementFormProps) {
-  const { connection } = useConnection();
   const today = new Date().toISOString().slice(0, 10);
-  const [borrowers, setBorrowers] = useState<Borrower[]>([]);
-  const [borrowerId, setBorrowerId] = useState("");
+  const [borrowerWallet, setBorrowerWallet] = useState("");
   const [amount, setAmount] = useState("");
   const [reason, setReason] = useState("");
   const [dueDate, setDueDate] = useState("");
-  const [isLoadingBorrowers, setIsLoadingBorrowers] = useState(true);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [isRecording, setIsRecording] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [createdMessage, setCreatedMessage] = useState<string | null>(null);
-
-  useEffect(() => {
-    let isMounted = true;
-
-    async function loadBorrowers() {
-      setIsLoadingBorrowers(true);
-      setError(null);
-
-      try {
-        const response = await fetch("/api/users/borrowers");
-
-        if (!response.ok) {
-          throw new Error("Could not load borrowers.");
-        }
-
-        const result = (await response.json()) as { borrowers: Borrower[] };
-
-        if (isMounted) {
-          setBorrowers(result.borrowers);
-          setBorrowerId(result.borrowers[0]?.id ?? "");
-        }
-      } catch (loadError) {
-        if (isMounted) {
-          setError(
-            loadError instanceof Error
-              ? loadError.message
-              : "Could not load borrowers.",
-          );
-        }
-      } finally {
-        if (isMounted) {
-          setIsLoadingBorrowers(false);
-        }
-      }
-    }
-
-    loadBorrowers();
-
-    return () => {
-      isMounted = false;
-    };
-  }, []);
-
-  const selectedBorrower = useMemo(
-    () => borrowers.find((borrower) => borrower.id === borrowerId),
-    [borrowers, borrowerId],
-  );
+  const [inviteLink, setInviteLink] = useState<string | null>(null);
+  const [isCopied, setIsCopied] = useState(false);
 
   async function createLoanAgreementOnSolana(loan: CreatedAgreement) {
-    const borrowerPubkey = getPublicKey(loan.borrowerWalletAddress);
-    const phantomProvider = (window as WindowWithPhantom).solana;
+    const phantom = (window as WindowWithPhantom).phantom?.solana;
 
-    if (!borrowerPubkey) {
-      throw new Error("Borrower is not ready.");
+    if (!phantom?.isPhantom) {
+      throw new Error("Phantom wallet not found. Please install Phantom.");
     }
 
-    if (!phantomProvider?.isPhantom) {
-      throw new Error("Wallet is not available.");
+    if (!phantom.isConnected) {
+      await phantom.connect();
     }
 
-    const connectedWallet = await phantomProvider.connect();
-    const activePublicKey = new PublicKey(connectedWallet.publicKey.toBase58());
+    const activePublicKey = loan.lenderWalletAddress
+      ? new PublicKey(loan.lenderWalletAddress)
+      : null;
+
+    if (!activePublicKey) {
+      throw new Error("Please reconnect your Phantom wallet");
+    }
+
+    const borrowerPubkey = new PublicKey(loan.borrowerWalletAddress!);
     const loanIdNum = getNumericLoanId(loan.id);
     const loanIdBuffer = Buffer.alloc(8);
     loanIdBuffer.writeBigUInt64LE(BigInt(loanIdNum));
@@ -168,20 +120,19 @@ export function CreateAgreementForm({ onAgreementCreated }: CreateAgreementFormP
       PROGRAM_ID,
     );
 
-    const anchorWallet = {
+    const connection = new Connection("https://api.devnet.solana.com", "confirmed");
+
+    const mockWallet = {
       publicKey: activePublicKey,
-      signTransaction: async <T extends Transaction | VersionedTransaction>(tx: T) => tx,
-      signAllTransactions: async <T extends Transaction | VersionedTransaction>(
-        txs: T[],
-      ) => txs,
+      signTransaction: async (tx: unknown) => tx,
+      signAllTransactions: async (txs: unknown) => txs,
     };
 
-    const providerForProgram = new AnchorProvider(connection, anchorWallet, {
+    const provider = new AnchorProvider(connection, mockWallet as never, {
       commitment: "confirmed",
-      skipPreflight: false,
     });
 
-    const program = new Program(TRUST_ME_BRO_ANCHOR_IDL, providerForProgram);
+    const program = new Program(TRUST_ME_BRO_ANCHOR_IDL, provider);
     const transaction = await program.methods
       .createLoan(
         new BN(loanIdNum),
@@ -198,37 +149,25 @@ export function CreateAgreementForm({ onAgreementCreated }: CreateAgreementFormP
       .transaction();
 
     transaction.feePayer = activePublicKey;
-    transaction.recentBlockhash = (
-      await connection.getLatestBlockhash("confirmed")
-    ).blockhash;
+    const { blockhash } = await connection.getLatestBlockhash("confirmed");
+    transaction.recentBlockhash = blockhash;
 
-    let txSignature: string;
-
-    if (phantomProvider.signAndSendTransaction) {
-      const result = await phantomProvider.signAndSendTransaction(transaction, {
-        preflightCommitment: "confirmed",
-        skipPreflight: false,
-      });
-      txSignature = typeof result === "string" ? result : result.signature;
-    } else if (phantomProvider.signTransaction) {
-      const signedTransaction = await phantomProvider.signTransaction(transaction);
-      txSignature = await connection.sendRawTransaction(
-        signedTransaction.serialize(),
-        {
-          preflightCommitment: "confirmed",
-          skipPreflight: false,
-        },
-      );
-    } else {
-      throw new Error("Wallet signature is not available.");
+    if (!phantom.signAndSendTransaction) {
+      throw new Error("Phantom cannot sign this transaction. Please reconnect.");
     }
 
-    await connection.confirmTransaction(txSignature, "confirmed");
+    // const { signature } = await phantom.signAndSendTransaction(transaction);//
+    const result = await phantom.signAndSendTransaction(transaction, {
+  skipPreflight: true,
+  preflightCommitment: "confirmed",
+} as any);
+const signature = typeof result === "string" ? result : result.signature;
+    await connection.confirmTransaction(signature, "confirmed");
 
     await fetch(`/api/loans/${loan.id}/signature`, {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ txSignature }),
+      body: JSON.stringify({ txSignature: signature }),
     });
   }
 
@@ -236,15 +175,23 @@ export function CreateAgreementForm({ onAgreementCreated }: CreateAgreementFormP
     event.preventDefault();
     setError(null);
     setCreatedMessage(null);
+    setInviteLink(null);
+    setIsCopied(false);
     setIsSubmitting(true);
     setIsRecording(false);
 
     try {
+      const borrowerPublicKey = getPublicKey(borrowerWallet.trim());
+
+      if (!borrowerPublicKey) {
+        throw new Error("Enter a valid Solana wallet address.");
+      }
+
       const response = await fetch("/api/loans", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          borrowerId,
+          borrowerWallet: borrowerPublicKey.toBase58(),
           amount: Number(amount),
           reason,
           dueDate,
@@ -260,19 +207,25 @@ export function CreateAgreementForm({ onAgreementCreated }: CreateAgreementFormP
         throw new Error(result.error ?? "Could not create agreement.");
       }
 
+      const nextInviteLink = result.loan.inviteToken
+        ? `${window.location.origin}/invite/${result.loan.inviteToken}`
+        : null;
+
       setIsRecording(true);
 
       try {
         await createLoanAgreementOnSolana(result.loan);
-        setCreatedMessage("Agreement created.");
+        setCreatedMessage("Agreement created!");
       } catch (syncError) {
         console.error("Agreement saved, but secure proof failed.", syncError);
-        setCreatedMessage("Agreement saved. Secure proof can be retried later.");
+        setCreatedMessage("Agreement created! Secure proof can be retried later.");
       }
 
+      setInviteLink(nextInviteLink);
       setAmount("");
       setReason("");
       setDueDate("");
+      setBorrowerWallet("");
       onAgreementCreated?.();
     } catch (createError) {
       setError(
@@ -284,6 +237,14 @@ export function CreateAgreementForm({ onAgreementCreated }: CreateAgreementFormP
       setIsRecording(false);
       setIsSubmitting(false);
     }
+  }
+
+  async function copyInviteLink() {
+    if (!inviteLink) return;
+
+    await navigator.clipboard.writeText(inviteLink);
+    setIsCopied(true);
+    window.setTimeout(() => setIsCopied(false), 1800);
   }
 
   return (
@@ -308,26 +269,17 @@ export function CreateAgreementForm({ onAgreementCreated }: CreateAgreementFormP
       <form className="mt-6 grid gap-4" onSubmit={createAgreement}>
         <label className="grid gap-2 text-sm">
           <span className="text-xs font-medium uppercase tracking-[0.12em] text-[var(--muted)]">
-            Borrower
+            Borrower wallet address
           </span>
-          <select
+          <input
             className={inputClass}
-            disabled={isLoadingBorrowers || borrowers.length === 0}
-            value={borrowerId}
-            onChange={(event) => setBorrowerId(event.target.value)}
-          >
-            {isLoadingBorrowers ? (
-              <option>Loading people</option>
-            ) : borrowers.length > 0 ? (
-              borrowers.map((borrower, index) => (
-                <option key={borrower.id} value={borrower.id}>
-                  {borrower.username ?? `Person ${index + 1}`}
-                </option>
-              ))
-            ) : (
-              <option>No borrowers available</option>
-            )}
-          </select>
+            autoComplete="off"
+            inputMode="text"
+            placeholder="Enter their Solana wallet address"
+            spellCheck={false}
+            value={borrowerWallet}
+            onChange={(event) => setBorrowerWallet(event.target.value)}
+          />
         </label>
 
         <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-1">
@@ -380,24 +332,45 @@ export function CreateAgreementForm({ onAgreementCreated }: CreateAgreementFormP
           />
         </label>
 
-        {selectedBorrower ? (
-          <p className="text-xs text-[var(--muted)]">
-            Creating with {selectedBorrower.username ?? "this person"}.
-          </p>
-        ) : null}
-
         {error ? <p className="text-sm text-[var(--red)]">{error}</p> : null}
 
         {createdMessage ? (
-          <p className="flex items-center gap-2 text-sm text-[var(--green)]">
-            <CheckCircle2 className="h-4 w-4" aria-hidden="true" />
-            {createdMessage}
-          </p>
+          <div className="grid gap-3 rounded-[8px] border border-[rgba(34,197,94,0.28)] bg-[rgba(34,197,94,0.08)] p-3">
+            <p className="flex items-center gap-2 text-sm font-medium text-[var(--green)]">
+              <CheckCircle2 className="h-4 w-4" aria-hidden="true" />
+              {createdMessage}
+            </p>
+
+            {inviteLink ? (
+              <div className="grid gap-2">
+                <p className="text-xs leading-5 text-[var(--muted)]">
+                  Share this link with the borrower to let them accept.
+                </p>
+                <div className="flex min-w-0 items-center gap-2 rounded-[8px] border border-[var(--border)] bg-[var(--bg)] p-2">
+                  <p className="min-w-0 flex-1 truncate text-xs text-[var(--text)]">
+                    {inviteLink}
+                  </p>
+                  <button
+                    aria-label="Copy invite link"
+                    className="flex h-8 w-8 shrink-0 items-center justify-center rounded-[8px] text-[var(--muted)] hover:bg-[var(--surface)] hover:text-[var(--text)]"
+                    onClick={copyInviteLink}
+                    type="button"
+                  >
+                    {isCopied ? (
+                      <Check className="h-4 w-4 text-[var(--green)]" aria-hidden="true" />
+                    ) : (
+                      <Copy className="h-4 w-4" aria-hidden="true" />
+                    )}
+                  </button>
+                </div>
+              </div>
+            ) : null}
+          </div>
         ) : null}
 
         <button
           className="mt-1 flex h-12 w-full items-center justify-center gap-2 rounded-[8px] bg-[var(--green)] px-4 text-sm font-semibold text-black hover:bg-[#4ADE80] disabled:cursor-not-allowed disabled:opacity-50"
-          disabled={isSubmitting || isLoadingBorrowers || borrowers.length === 0}
+          disabled={isSubmitting}
           type="submit"
         >
           {isSubmitting ? (

@@ -33,6 +33,7 @@ model Loan {
   dueDate     DateTime
   status      LoanStatus   @default(PENDING)
   txSignature String?
+  inviteToken String?      @unique
   createdAt   DateTime     @default(now())
   acceptedAt  DateTime?
   repaidAt    DateTime?
