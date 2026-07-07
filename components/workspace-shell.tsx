@@ -1,5 +1,6 @@
 "use client";
 
+import { X } from "lucide-react";
 import { useState } from "react";
 import { AgreementsDashboard } from "@/components/agreements-dashboard";
 import { CreateAgreementForm } from "@/components/create-agreement-form";
@@ -23,7 +24,10 @@ export function WorkspaceShell({ initialUser }: WorkspaceShellProps) {
   const [user, setUser] = useState<AuthUser | null>(initialUser);
   const [agreementsRefreshKey, setAgreementsRefreshKey] = useState(0);
   const [isRefreshingUser, setIsRefreshingUser] = useState(false);
+  const [isUsernameBannerDismissed, setIsUsernameBannerDismissed] = useState(false);
   const displayName = user?.username ?? "there";
+  const showUsernameBanner =
+    Boolean(user && !user.username) && !isUsernameBannerDismissed;
 
   async function refreshUser() {
     if (!user) return;
@@ -81,7 +85,24 @@ export function WorkspaceShell({ initialUser }: WorkspaceShellProps) {
 
       <div className="mx-auto w-full max-w-[1100px] px-6 pt-[60px]">
         {user ? (
-          <div className="grid gap-8 lg:grid-cols-[minmax(0,0.6fr)_minmax(320px,0.4fr)]">
+          <div>
+            {showUsernameBanner ? (
+              <div className="mt-6 flex items-center justify-between gap-4 rounded-[8px] border border-amber-900/70 bg-amber-950/30 px-4 py-3 text-sm text-amber-200">
+                <a className="font-medium hover:text-amber-100" href="/setup">
+                  👤 Set your username →
+                </a>
+                <button
+                  aria-label="Dismiss username reminder"
+                  className="rounded-[8px] p-1 text-amber-300 hover:bg-amber-900/40 hover:text-amber-100"
+                  onClick={() => setIsUsernameBannerDismissed(true)}
+                  type="button"
+                >
+                  <X className="h-4 w-4" aria-hidden="true" />
+                </button>
+              </div>
+            ) : null}
+
+            <div className="grid gap-8 lg:grid-cols-[minmax(0,0.6fr)_minmax(320px,0.4fr)]">
             <aside className="order-1 grid h-[calc(100vh-60px)] gap-5 overflow-y-auto py-8 pr-1 lg:order-2">
               <TrustScoreCard
                 isRefreshing={isRefreshingUser}
@@ -102,6 +123,7 @@ export function WorkspaceShell({ initialUser }: WorkspaceShellProps) {
                 user={user}
               />
             </section>
+          </div>
           </div>
         ) : (
           <div className="mx-auto grid max-w-[720px] gap-8 py-8">

@@ -35,9 +35,11 @@ type Agreement = {
   inviteToken: string | null;
   lender: {
     username: string | null;
+    walletAddress?: string;
   };
   borrower: {
     username: string | null;
+    walletAddress?: string;
   };
 };
 
@@ -113,18 +115,33 @@ function formatShortDate(value: string) {
   }).format(new Date(value));
 }
 
+function formatParticipantName(person: {
+  username: string | null;
+  walletAddress?: string;
+}) {
+  if (person.username) {
+    return person.username;
+  }
+
+  if (person.walletAddress) {
+    return `${person.walletAddress.slice(0, 4)}...`;
+  }
+
+  return "Unknown";
+}
+
 function getAgreementDirection(agreement: Agreement, userId: string) {
   if (agreement.lenderId === userId) {
     return {
       arrow: "↗",
-      label: `Lent to ${agreement.borrower.username ?? "someone"}`,
+      label: `Lent to ${formatParticipantName(agreement.borrower)}`,
       arrowClass: "text-[var(--green)]",
     };
   }
 
   return {
     arrow: "↙",
-    label: `Borrowed from ${agreement.lender.username ?? "someone"}`,
+    label: `Borrowed from ${formatParticipantName(agreement.lender)}`,
     arrowClass: "text-[var(--muted)]",
   };
 }

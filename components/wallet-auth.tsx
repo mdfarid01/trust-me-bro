@@ -2,6 +2,7 @@
 
 import { CheckCircle2, Loader2, LogOut, ShieldCheck, Wallet } from "lucide-react";
 import bs58 from "bs58";
+import { useRouter } from "next/navigation";
 import { useMemo, useState } from "react";
 import { Button } from "@/components/ui/button";
 import type { AuthUser } from "@/app/lib/session";
@@ -27,6 +28,7 @@ type WalletAuthProps = {
 type Status = "idle" | "connecting" | "connected" | "error";
 
 export function WalletAuth({ initialUser, onUserChange }: WalletAuthProps) {
+  const router = useRouter();
   const [user, setUser] = useState<AuthUser | null>(initialUser);
   const [status, setStatus] = useState<Status>(initialUser ? "connected" : "idle");
   const [error, setError] = useState<string | null>(null);
@@ -78,10 +80,17 @@ export function WalletAuth({ initialUser, onUserChange }: WalletAuthProps) {
         throw new Error("Wallet signature could not be verified.");
       }
 
-      const result = (await verifyResponse.json()) as { user: AuthUser };
+      const result = (await verifyResponse.json()) as {
+        redirectTo?: string;
+        user: AuthUser;
+      };
       setUser(result.user);
       onUserChange?.(result.user);
       setStatus("connected");
+
+      if (result.redirectTo === "/setup") {
+        router.push("/setup");
+      }
     } catch (connectError) {
       setUser(null);
       setStatus("error");

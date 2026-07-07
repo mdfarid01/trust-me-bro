@@ -80,12 +80,13 @@ function getPublicKey(value?: string) {
 
 export function CreateAgreementForm({ onAgreementCreated }: CreateAgreementFormProps) {
   const today = new Date().toISOString().slice(0, 10);
-  const [borrowerWallet, setBorrowerWallet] = useState("");
+  const [borrowerInput, setBorrowerInput] = useState("");
   const [amount, setAmount] = useState("");
   const [reason, setReason] = useState("");
   const [dueDate, setDueDate] = useState("");
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [isRecording, setIsRecording] = useState(false);
+  const [isLookingUpBorrower, setIsLookingUpBorrower] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [createdMessage, setCreatedMessage] = useState<string | null>(null);
   const [inviteLink, setInviteLink] = useState<string | null>(null);
@@ -171,6 +172,46 @@ const signature = typeof result === "string" ? result : result.signature;
     });
   }
 
+  async function resolveBorrowerPublicKey() {
+    const rawBorrowerInput = borrowerInput.trim();
+
+    if (rawBorrowerInput.length > 30) {
+      const walletPublicKey = getPublicKey(rawBorrowerInput);
+
+      if (!walletPublicKey) {
+        throw new Error("Enter a valid Solana wallet address.");
+      }
+
+      return walletPublicKey;
+    }
+
+    const username = rawBorrowerInput.replace(/^@/, "");
+
+    if (!username) {
+      throw new Error("Enter a wallet address or username.");
+    }
+
+    setIsLookingUpBorrower(true);
+
+    try {
+      const response = await fetch(
+        `/api/users/lookup?username=${encodeURIComponent(username)}`,
+      );
+      const result = (await response.json().catch(() => null)) as {
+        walletAddress?: string;
+        error?: string;
+      } | null;
+
+      if (!response.ok || !result?.walletAddress) {
+        throw new Error("No user found with that username");
+      }
+
+      return new PublicKey(result.walletAddress);
+    } finally {
+      setIsLookingUpBorrower(false);
+    }
+  }
+
   async function createAgreement(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setError(null);
@@ -181,11 +222,7 @@ const signature = typeof result === "string" ? result : result.signature;
     setIsRecording(false);
 
     try {
-      const borrowerPublicKey = getPublicKey(borrowerWallet.trim());
-
-      if (!borrowerPublicKey) {
-        throw new Error("Enter a valid Solana wallet address.");
-      }
+      const borrowerPublicKey = await resolveBorrowerPublicKey();
 
       const response = await fetch("/api/loans", {
         method: "POST",
@@ -225,7 +262,7 @@ const signature = typeof result === "string" ? result : result.signature;
       setAmount("");
       setReason("");
       setDueDate("");
-      setBorrowerWallet("");
+      setBorrowerInput("");
       onAgreementCreated?.();
     } catch (createError) {
       setError(
@@ -269,17 +306,20 @@ const signature = typeof result === "string" ? result : result.signature;
       <form className="mt-6 grid gap-4" onSubmit={createAgreement}>
         <label className="grid gap-2 text-sm">
           <span className="text-xs font-medium uppercase tracking-[0.12em] text-[var(--muted)]">
-            Borrower wallet address
+            Borrower
           </span>
           <input
             className={inputClass}
             autoComplete="off"
             inputMode="text"
-            placeholder="Enter their Solana wallet address"
+            placeholder="Wallet address or @username"
             spellCheck={false}
-            value={borrowerWallet}
-            onChange={(event) => setBorrowerWallet(event.target.value)}
+            value={borrowerInput}
+            onChange={(event) => setBorrowerInput(event.target.value)}
           />
+          {isLookingUpBorrower ? (
+            <span className="text-xs text-[var(--muted)]">Looking up username...</span>
+          ) : null}
         </label>
 
         <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-1">
@@ -370,13 +410,15 @@ const signature = typeof result === "string" ? result : result.signature;
 
         <button
           className="mt-1 flex h-12 w-full items-center justify-center gap-2 rounded-[8px] bg-[var(--green)] px-4 text-sm font-semibold text-black hover:bg-[#4ADE80] disabled:cursor-not-allowed disabled:opacity-50"
-          disabled={isSubmitting}
+          disabled={isSubmitting || isLookingUpBorrower}
           type="submit"
         >
-          {isSubmitting ? (
+          {isSubmitting || isLookingUpBorrower ? (
             <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />
           ) : null}
-          {isRecording
+          {isLookingUpBorrower
+            ? "Looking up..."
+            : isRecording
             ? "Creating..."
             : isSubmitting
               ? "Creating..."
