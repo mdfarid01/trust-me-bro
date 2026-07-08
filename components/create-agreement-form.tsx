@@ -21,6 +21,7 @@ type CreatedAgreement = {
   status: "PENDING" | "ACCEPTED" | "REPAID" | "CANCELLED";
   txSignature: string | null;
   inviteToken: string | null;
+  onChainLoanId?: number;
   borrowerWalletAddress?: string;
   lenderWalletAddress?: string;
   borrower: {
@@ -129,7 +130,7 @@ export function CreateAgreementForm({
     }
 
     const borrowerPubkey = new PublicKey(loan.borrowerWalletAddress!);
-    const loanIdNum = getNumericLoanId(loan.id);
+    const loanIdNum = loan.onChainLoanId ?? getNumericLoanId(loan.id);
     const loanIdBuffer = Buffer.alloc(8);
     loanIdBuffer.writeBigUInt64LE(BigInt(loanIdNum));
 
@@ -256,6 +257,7 @@ export function CreateAgreementForm({
       }
 
       const loanId = crypto.randomUUID();
+      const onChainLoanId = getNumericLoanId(loanId);
       const loanForProof: CreatedAgreement = {
         id: loanId,
         amount: amountNumber,
@@ -264,6 +266,7 @@ export function CreateAgreementForm({
         status: "PENDING",
         txSignature: null,
         inviteToken: null,
+        onChainLoanId,
         borrowerWalletAddress: borrowerPublicKey.toBase58(),
         lenderWalletAddress,
         borrower: {
@@ -292,6 +295,7 @@ export function CreateAgreementForm({
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           loanId,
+          onChainLoanId,
           txSignature,
           borrowerWallet: borrowerPublicKey.toBase58(),
           amount: amountNumber,

@@ -34,6 +34,7 @@ type Agreement = {
   repaymentMarked: boolean;
   txSignature: string | null;
   inviteToken: string | null;
+  onChainLoanId: string | null;
   borrowerWalletAddress?: string;
   lenderWalletAddress?: string;
   lender: {
@@ -581,7 +582,9 @@ export function AgreementsDashboard({
 
     const { provider, signerPublicKey } = await getPhantomSigner();
     const lenderPublicKey = new PublicKey(lenderWalletAddress);
-    const numericLoanId = getNumericLoanId(agreement.id);
+    const numericLoanId = agreement.onChainLoanId
+      ? Number(agreement.onChainLoanId)
+      : getNumericLoanId(agreement.id);
     const loanIdSeed = loanIdToSeed(numericLoanId);
     const [loanAccount] = PublicKey.findProgramAddressSync(
       [new TextEncoder().encode("loan"), lenderPublicKey.toBuffer(), loanIdSeed],

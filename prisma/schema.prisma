@@ -25,21 +25,22 @@ model User {
 }
 
 model Loan {
-  id          String       @id @default(cuid())
-  lenderId    String
-  borrowerId  String
-  amount      Float
-  reason      String
-  dueDate     DateTime
-  status      LoanStatus   @default(PENDING)
-  txSignature String?
-  inviteToken String?      @unique
-  createdAt   DateTime     @default(now())
-  acceptedAt  DateTime?
-  repaidAt    DateTime?
-  lender      User         @relation("LoanLender", fields: [lenderId], references: [id])
-  borrower    User         @relation("LoanBorrower", fields: [borrowerId], references: [id])
-  trustEvents TrustEvent[]
+  id            String       @id @default(cuid())
+  lenderId      String
+  borrowerId    String
+  amount        Float
+  reason        String
+  dueDate       DateTime
+  status        LoanStatus   @default(PENDING)
+  txSignature   String?
+  inviteToken   String?      @unique
+  onChainLoanId BigInt?
+  createdAt     DateTime     @default(now())
+  acceptedAt    DateTime?
+  repaidAt      DateTime?
+  lender        User         @relation("LoanLender", fields: [lenderId], references: [id])
+  borrower      User         @relation("LoanBorrower", fields: [borrowerId], references: [id])
+  trustEvents   TrustEvent[]
 }
 
 model TrustEvent {
