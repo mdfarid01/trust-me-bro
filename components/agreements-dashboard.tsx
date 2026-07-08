@@ -34,6 +34,8 @@ type Agreement = {
   repaymentMarked: boolean;
   txSignature: string | null;
   inviteToken: string | null;
+  borrowerWalletAddress?: string;
+  lenderWalletAddress?: string;
   lender: {
     username: string | null;
     walletAddress?: string;
@@ -568,10 +570,13 @@ export function AgreementsDashboard({
     agreement: Agreement,
     methodName: "acceptLoan" | "repayLoan",
   ) {
-    const lenderWalletAddress = agreement.lender.walletAddress;
+    const lenderWalletAddress =
+      agreement.lenderWalletAddress ?? agreement.lender.walletAddress;
 
     if (!lenderWalletAddress) {
-      throw new Error("Lender wallet is not available.");
+      throw new Error(
+        "Cannot process repayment: lender info missing. Please refresh the page and try again.",
+      );
     }
 
     const { provider, signerPublicKey } = await getPhantomSigner();
@@ -665,6 +670,15 @@ export function AgreementsDashboard({
 
       if (!agreement) {
         throw new Error("Agreement not found.");
+      }
+
+      console.log("lenderWallet for repay:", agreement.lenderWalletAddress);
+
+      if (!agreement.lenderWalletAddress) {
+        setError(
+          "Cannot process repayment: lender info missing. Please refresh the page and try again.",
+        );
+        return;
       }
 
       const txSignature = await sendAgreementTransaction(agreement, "repayLoan");
