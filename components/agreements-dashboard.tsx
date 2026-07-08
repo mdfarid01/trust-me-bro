@@ -15,6 +15,7 @@ import type { ReactNode } from "react";
 import { useEffect, useMemo, useState } from "react";
 import {
   getTrustMeBroProgram,
+  SOLANA_CONNECTION,
   TRUST_ME_BRO_PROGRAM_ID,
 } from "@/app/lib/program";
 import type { AuthUser } from "@/app/lib/session";
@@ -43,20 +44,17 @@ type Agreement = {
   };
 };
 
-type AcceptedAgreement = {
-  id: string;
-  lenderWalletAddress?: string;
-};
-
-type RepaidAgreement = {
-  id: string;
-  lenderWalletAddress?: string;
-};
-
 type PhantomProvider = {
   isPhantom?: boolean;
   publicKey?: PublicKey;
   connect(): Promise<{ publicKey: { toBase58(): string } }>;
+  signAndSendTransaction<T extends Transaction | VersionedTransaction>(
+    transaction: T,
+    options?: {
+      preflightCommitment?: "processed" | "confirmed" | "finalized";
+      skipPreflight?: boolean;
+    },
+  ): Promise<{ signature: string } | string>;
   signTransaction<T extends Transaction | VersionedTransaction>(transaction: T): Promise<T>;
   signAllTransactions<T extends Transaction | VersionedTransaction>(
     transactions: T[],
@@ -64,6 +62,9 @@ type PhantomProvider = {
 };
 
 type WindowWithPhantom = Window & {
+  phantom?: {
+    solana?: PhantomProvider;
+  };
   solana?: PhantomProvider;
 };
 
@@ -164,6 +165,34 @@ function loanIdToSeed(loanId: number) {
   }
 
   return seed;
+}
+
+function getPhantomProvider() {
+  const browserWindow = window as WindowWithPhantom;
+
+  return browserWindow.phantom?.solana ?? browserWindow.solana;
+}
+
+function isUserCancelledError(error: unknown) {
+  if (typeof error === "object" && error !== null && "code" in error) {
+    const code = (error as { code?: unknown }).code;
+
+    if (code === 4001) {
+      return true;
+    }
+  }
+
+  const message = error instanceof Error ? error.message : String(error);
+
+  return /cancel|reject|denied|user closed/i.test(message);
+}
+
+function getMutationError(error: unknown, cancelledMessage: string, fallback: string) {
+  if (isUserCancelledError(error)) {
+    return cancelledMessage;
+  }
+
+  return error instanceof Error ? error.message : fallback;
 }
 
 function TextAction({
@@ -506,57 +535,47 @@ export function AgreementsDashboard({
     loadAgreements();
   }, [refreshKey]);
 
-  async function acceptAgreementOnSolana(agreement: AcceptedAgreement) {
-    const provider = (window as WindowWithPhantom).solana;
-
-    if (!provider?.isPhantom || !agreement.lenderWalletAddress) {
-      return;
-    }
-
-    const connection = await provider.connect();
-    const signerPublicKey = new PublicKey(connection.publicKey.toBase58());
-    const lenderPublicKey = new PublicKey(agreement.lenderWalletAddress);
-    const numericLoanId = getNumericLoanId(agreement.id);
-    const loanIdSeed = loanIdToSeed(numericLoanId);
-    const [loanAccount] = PublicKey.findProgramAddressSync(
-      [new TextEncoder().encode("loan"), lenderPublicKey.toBuffer(), loanIdSeed],
-      TRUST_ME_BRO_PROGRAM_ID,
+  function findAgreement(agreementId: string) {
+    return [...groups.pending, ...groups.accepted, ...groups.repaid].find(
+      (agreement) => agreement.id === agreementId,
     );
-
-    const program = getTrustMeBroProgram({
-      publicKey: signerPublicKey,
-      signTransaction: provider.signTransaction.bind(provider),
-      signAllTransactions: provider.signAllTransactions.bind(provider),
-    });
-
-    const txSignature = await program.methods
-      .acceptLoan()
-      .accounts({
-        loan: loanAccount,
-        signer: signerPublicKey,
-      })
-      .rpc();
-
-    await fetch("/api/loans", {
-      method: "PATCH",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        loanId: agreement.id,
-        txSignature,
-      }),
-    });
   }
 
-  async function repayAgreementOnSolana(agreement: RepaidAgreement) {
-    const provider = (window as WindowWithPhantom).solana;
+  async function getPhantomSigner() {
+    const provider = getPhantomProvider();
 
-    if (!provider?.isPhantom || !agreement.lenderWalletAddress) {
-      return;
+    if (!provider?.isPhantom) {
+      throw new Error("Phantom wallet not found. Please install Phantom.");
     }
 
-    const connection = await provider.connect();
-    const signerPublicKey = new PublicKey(connection.publicKey.toBase58());
-    const lenderPublicKey = new PublicKey(agreement.lenderWalletAddress);
+    const connection = provider.publicKey ? null : await provider.connect();
+    const signerPublicKey =
+      provider.publicKey ??
+      (connection ? new PublicKey(connection.publicKey.toBase58()) : null);
+
+    if (!signerPublicKey) {
+      throw new Error("Please reconnect your Phantom wallet.");
+    }
+
+    if (signerPublicKey.toBase58() !== user.walletAddress) {
+      throw new Error("Wrong Phantom account");
+    }
+
+    return { provider, signerPublicKey };
+  }
+
+  async function sendAgreementTransaction(
+    agreement: Agreement,
+    methodName: "acceptLoan" | "repayLoan",
+  ) {
+    const lenderWalletAddress = agreement.lender.walletAddress;
+
+    if (!lenderWalletAddress) {
+      throw new Error("Lender wallet is not available.");
+    }
+
+    const { provider, signerPublicKey } = await getPhantomSigner();
+    const lenderPublicKey = new PublicKey(lenderWalletAddress);
     const numericLoanId = getNumericLoanId(agreement.id);
     const loanIdSeed = loanIdToSeed(numericLoanId);
     const [loanAccount] = PublicKey.findProgramAddressSync(
@@ -566,26 +585,38 @@ export function AgreementsDashboard({
 
     const program = getTrustMeBroProgram({
       publicKey: signerPublicKey,
-      signTransaction: provider.signTransaction.bind(provider),
-      signAllTransactions: provider.signAllTransactions.bind(provider),
+      signTransaction: async (transaction) => transaction,
+      signAllTransactions: async (transactions) => transactions,
     });
 
-    const txSignature = await program.methods
-      .repayLoan()
+    const transaction = await program.methods[methodName]()
       .accounts({
         loan: loanAccount,
         signer: signerPublicKey,
       })
-      .rpc();
+      .transaction();
 
-    await fetch("/api/loans", {
-      method: "PATCH",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        loanId: agreement.id,
-        txSignature,
-      }),
+    transaction.feePayer = signerPublicKey;
+    const { blockhash, lastValidBlockHeight } =
+      await SOLANA_CONNECTION.getLatestBlockhash("confirmed");
+    transaction.recentBlockhash = blockhash;
+
+    const result = await provider.signAndSendTransaction(transaction, {
+      preflightCommitment: "confirmed",
+      skipPreflight: false,
     });
+    const txSignature = typeof result === "string" ? result : result.signature;
+
+    await SOLANA_CONNECTION.confirmTransaction(
+      {
+        blockhash,
+        lastValidBlockHeight,
+        signature: txSignature,
+      },
+      "confirmed",
+    );
+
+    return txSignature;
   }
 
   async function acceptAgreement(agreementId: string) {
@@ -593,30 +624,32 @@ export function AgreementsDashboard({
     setError(null);
 
     try {
+      const agreement = findAgreement(agreementId);
+
+      if (!agreement) {
+        throw new Error("Agreement not found.");
+      }
+
+      const txSignature = await sendAgreementTransaction(agreement, "acceptLoan");
       const response = await fetch(`/api/loans/${agreementId}/accept`, {
         method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ txSignature }),
       });
-      const result = (await response.json()) as {
-        loan?: AcceptedAgreement;
-        error?: string;
-      };
+      const result = (await response.json()) as { error?: string };
 
       if (!response.ok) {
         throw new Error(result.error ?? "Could not accept agreement.");
       }
 
-      if (result.loan) {
-        await acceptAgreementOnSolana(result.loan).catch((syncError) => {
-          console.error("Agreement accepted, but proof sync failed.", syncError);
-        });
-      }
-
       await loadAgreements();
     } catch (acceptError) {
       setError(
-        acceptError instanceof Error
-          ? acceptError.message
-          : "Could not accept agreement.",
+        getMutationError(
+          acceptError,
+          "Action cancelled",
+          "Could not accept agreement.",
+        ),
       );
     } finally {
       setAcceptingAgreementId(null);
@@ -628,28 +661,32 @@ export function AgreementsDashboard({
     setError(null);
 
     try {
+      const agreement = findAgreement(agreementId);
+
+      if (!agreement) {
+        throw new Error("Agreement not found.");
+      }
+
+      const txSignature = await sendAgreementTransaction(agreement, "repayLoan");
       const response = await fetch(`/api/loans/${agreementId}/repay`, {
         method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ txSignature }),
       });
-      const result = (await response.json()) as {
-        loan?: RepaidAgreement;
-        error?: string;
-      };
+      const result = (await response.json()) as { error?: string };
 
       if (!response.ok) {
         throw new Error(result.error ?? "Could not mark repayment.");
       }
 
-      if (result.loan) {
-        await repayAgreementOnSolana(result.loan).catch((syncError) => {
-          console.error("Repayment marked, but proof sync failed.", syncError);
-        });
-      }
-
       await loadAgreements();
     } catch (repayError) {
       setError(
-        repayError instanceof Error ? repayError.message : "Could not mark repayment.",
+        getMutationError(
+          repayError,
+          "Repayment cancelled",
+          "Could not mark repayment.",
+        ),
       );
     } finally {
       setRepayingAgreementId(null);

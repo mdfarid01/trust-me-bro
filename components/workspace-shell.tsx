@@ -27,7 +27,7 @@ export function WorkspaceShell({ initialUser }: WorkspaceShellProps) {
   const [isUsernameBannerDismissed, setIsUsernameBannerDismissed] = useState(false);
   const displayName = user?.username ?? "there";
   const showUsernameBanner =
-    Boolean(user && !user.username) && !isUsernameBannerDismissed;
+    Boolean(user && user.username == null) && !isUsernameBannerDismissed;
 
   async function refreshUser() {
     if (!user) return;
@@ -110,6 +110,7 @@ export function WorkspaceShell({ initialUser }: WorkspaceShellProps) {
                 user={user}
               />
               <CreateAgreementForm
+                lenderWalletAddress={user.walletAddress}
                 onAgreementCreated={() =>
                   setAgreementsRefreshKey((currentKey) => currentKey + 1)
                 }

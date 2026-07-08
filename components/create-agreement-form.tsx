@@ -29,6 +29,7 @@ type CreatedAgreement = {
 };
 
 type CreateAgreementFormProps = {
+  lenderWalletAddress: string;
   onAgreementCreated?: () => void;
 };
 
@@ -40,12 +41,12 @@ type PhantomSolanaProvider = {
   };
   connect(): Promise<{ publicKey: { toBase58(): string } }>;
   signAndSendTransaction?<T extends Transaction | VersionedTransaction>(
-  transaction: T,
-  options?: {
-    skipPreflight?: boolean;
-    preflightCommitment?: "processed" | "confirmed" | "finalized";
-  },
-): Promise<{ signature: string } | string>;
+    transaction: T,
+    options?: {
+      skipPreflight?: boolean;
+      preflightCommitment?: "processed" | "confirmed" | "finalized";
+    },
+  ): Promise<{ signature: string } | string>;
 };
 
 type WindowWithPhantom = Window & {
@@ -62,8 +63,11 @@ const inputClass =
   "w-full rounded-[8px] border border-[var(--border)] bg-[var(--bg)] px-3 py-3 text-sm text-[var(--text)] outline-none placeholder:text-[var(--muted)] hover:border-zinc-700 focus:border-[var(--green)]";
 
 function getNumericLoanId(loanId: string) {
-  // Use timestamp + random to ensure uniqueness every time
-  return Date.now() % 1_000_000 + Math.floor(Math.random() * 1000);
+  const maxSafeLoanId = 9_007_199_254_740_991;
+
+  return Array.from(loanId).reduce((hash, character) => {
+    return (hash * 31 + character.charCodeAt(0)) % maxSafeLoanId;
+  }, 7);
 }
 
 function getPublicKey(value?: string) {
@@ -78,7 +82,10 @@ function getPublicKey(value?: string) {
   }
 }
 
-export function CreateAgreementForm({ onAgreementCreated }: CreateAgreementFormProps) {
+export function CreateAgreementForm({
+  lenderWalletAddress,
+  onAgreementCreated,
+}: CreateAgreementFormProps) {
   const today = new Date().toISOString().slice(0, 10);
   const [borrowerInput, setBorrowerInput] = useState("");
   const [amount, setAmount] = useState("");
@@ -101,6 +108,16 @@ export function CreateAgreementForm({ onAgreementCreated }: CreateAgreementFormP
 
     if (!phantom.isConnected) {
       await phantom.connect();
+    }
+
+    if (!phantom.publicKey) {
+      throw new Error("Please reconnect your Phantom wallet");
+    }
+
+    if (phantom.publicKey.toBase58() !== loan.lenderWalletAddress) {
+      throw new Error(
+        "Wrong Phantom account selected. Please switch to the wallet you used to sign in, then try again.",
+      );
     }
 
     const activePublicKey = loan.lenderWalletAddress
@@ -157,19 +174,14 @@ export function CreateAgreementForm({ onAgreementCreated }: CreateAgreementFormP
       throw new Error("Phantom cannot sign this transaction. Please reconnect.");
     }
 
-    // const { signature } = await phantom.signAndSendTransaction(transaction);//
     const result = await phantom.signAndSendTransaction(transaction, {
-  skipPreflight: true,
-  preflightCommitment: "confirmed",
-} as any);
-const signature = typeof result === "string" ? result : result.signature;
+      skipPreflight: true,
+      preflightCommitment: "confirmed",
+    });
+    const signature = typeof result === "string" ? result : result.signature;
     await connection.confirmTransaction(signature, "confirmed");
 
-    await fetch(`/api/loans/${loan.id}/signature`, {
-      method: "PATCH",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ txSignature: signature }),
-    });
+    return signature;
   }
 
   async function resolveBorrowerPublicKey() {
@@ -223,14 +235,67 @@ const signature = typeof result === "string" ? result : result.signature;
 
     try {
       const borrowerPublicKey = await resolveBorrowerPublicKey();
+      const amountNumber = Number(amount);
+      const trimmedReason = reason.trim();
+      const parsedDueDate = dueDate ? new Date(dueDate) : null;
+
+      if (!Number.isFinite(amountNumber) || amountNumber <= 0) {
+        throw new Error("Enter an amount greater than zero.");
+      }
+
+      if (!trimmedReason || trimmedReason.length > 128) {
+        throw new Error("Purpose must be 1 to 128 characters.");
+      }
+
+      if (!parsedDueDate || Number.isNaN(parsedDueDate.getTime())) {
+        throw new Error("Enter a valid due date.");
+      }
+
+      if (!lenderWalletAddress) {
+        throw new Error("Please sign in again before creating an agreement.");
+      }
+
+      const loanId = crypto.randomUUID();
+      const loanForProof: CreatedAgreement = {
+        id: loanId,
+        amount: amountNumber,
+        reason: trimmedReason,
+        dueDate,
+        status: "PENDING",
+        txSignature: null,
+        inviteToken: null,
+        borrowerWalletAddress: borrowerPublicKey.toBase58(),
+        lenderWalletAddress,
+        borrower: {
+          username: null,
+        },
+      };
+
+      setIsRecording(true);
+
+      let txSignature: string;
+
+      try {
+        txSignature = await createLoanAgreementOnSolana(loanForProof);
+      } catch (signError) {
+        const message =
+          signError instanceof Error &&
+          signError.message.startsWith("Wrong Phantom account selected")
+            ? signError.message
+            : "Agreement cancelled";
+
+        throw new Error(message);
+      }
 
       const response = await fetch("/api/loans", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
+          loanId,
+          txSignature,
           borrowerWallet: borrowerPublicKey.toBase58(),
-          amount: Number(amount),
-          reason,
+          amount: amountNumber,
+          reason: trimmedReason,
           dueDate,
         }),
       });
@@ -248,16 +313,7 @@ const signature = typeof result === "string" ? result : result.signature;
         ? `${window.location.origin}/invite/${result.loan.inviteToken}`
         : null;
 
-      setIsRecording(true);
-
-      try {
-        await createLoanAgreementOnSolana(result.loan);
-        setCreatedMessage("Agreement created!");
-      } catch (syncError) {
-        console.error("Agreement saved, but secure proof failed.", syncError);
-        setCreatedMessage("Agreement created! Secure proof can be retried later.");
-      }
-
+      setCreatedMessage("Agreement created!");
       setInviteLink(nextInviteLink);
       setAmount("");
       setReason("");
