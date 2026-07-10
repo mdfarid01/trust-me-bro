@@ -198,6 +198,16 @@ function getMutationError(error: unknown, cancelledMessage: string, fallback: st
   return error instanceof Error ? error.message : fallback;
 }
 
+function getOnChainLoanStatusName(account: { status?: unknown } | null) {
+  const status = account?.status;
+
+  if (typeof status !== "object" || status === null) {
+    return null;
+  }
+
+  return Object.keys(status)[0]?.toLowerCase() ?? null;
+}
+
 function TextAction({
   children,
   disabled,
@@ -597,6 +607,55 @@ export function AgreementsDashboard({
       signAllTransactions: async (transactions) => transactions,
     });
 
+    async function signAndConfirmTransaction(transaction: Transaction) {
+      transaction.feePayer = signerPublicKey;
+      const { blockhash, lastValidBlockHeight } =
+        await SOLANA_CONNECTION.getLatestBlockhash("confirmed");
+      transaction.recentBlockhash = blockhash;
+
+      const result = await provider.signAndSendTransaction(transaction, {
+        preflightCommitment: "confirmed",
+        skipPreflight: false,
+      });
+      const txSignature = typeof result === "string" ? result : result.signature;
+
+      await SOLANA_CONNECTION.confirmTransaction(
+        {
+          blockhash,
+          lastValidBlockHeight,
+          signature: txSignature,
+        },
+        "confirmed",
+      );
+
+      return txSignature;
+    }
+
+    if (methodName === "repayLoan") {
+      const loanAccountClient = (
+        program.account as {
+          loanAccount?: {
+            fetch(address: PublicKey): Promise<{ status?: unknown }>;
+          };
+        }
+      ).loanAccount;
+      const onChainLoan = loanAccountClient
+        ? await loanAccountClient.fetch(loanAccount).catch(() => null)
+        : null;
+
+      if (getOnChainLoanStatusName(onChainLoan) === "pending") {
+        const acceptTransaction = await program.methods
+          .acceptLoan()
+          .accounts({
+            loan: loanAccount,
+            signer: signerPublicKey,
+          })
+          .transaction();
+
+        await signAndConfirmTransaction(acceptTransaction);
+      }
+    }
+
     const transaction = await program.methods[methodName]()
       .accounts({
         loan: loanAccount,
@@ -604,27 +663,7 @@ export function AgreementsDashboard({
       })
       .transaction();
 
-    transaction.feePayer = signerPublicKey;
-    const { blockhash, lastValidBlockHeight } =
-      await SOLANA_CONNECTION.getLatestBlockhash("confirmed");
-    transaction.recentBlockhash = blockhash;
-
-    const result = await provider.signAndSendTransaction(transaction, {
-      preflightCommitment: "confirmed",
-      skipPreflight: false,
-    });
-    const txSignature = typeof result === "string" ? result : result.signature;
-
-    await SOLANA_CONNECTION.confirmTransaction(
-      {
-        blockhash,
-        lastValidBlockHeight,
-        signature: txSignature,
-      },
-      "confirmed",
-    );
-
-    return txSignature;
+    return signAndConfirmTransaction(transaction);
   }
 
   async function acceptAgreement(agreementId: string) {
