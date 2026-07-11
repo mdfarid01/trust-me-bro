@@ -17,6 +17,7 @@ model User {
   id            String       @id @default(cuid())
   walletAddress String       @unique
   username      String?
+  email         String?      @unique
   createdAt     DateTime     @default(now())
   loansLent     Loan[]       @relation("LoanLender")
   loansBorrowed Loan[]       @relation("LoanBorrower")
