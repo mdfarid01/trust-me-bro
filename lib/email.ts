@@ -50,7 +50,7 @@ export async function sendAgreementCreatedEmail({
   const safeReason = escapeHtml(reason);
 
   await resend.emails.send({
-    from: "Trust Me Bro <notifications@trustmebro.xyz>",
+    from: "Trust Me Bro <onboarding@resend.dev>",
     to: toEmail,
     subject: `${fromName} wants to make an agreement with you`,
     html: emailShell(`
@@ -85,7 +85,7 @@ export async function sendAgreementAcceptedEmail({
   const safeReason = escapeHtml(reason);
 
   await resend.emails.send({
-    from: "Trust Me Bro <notifications@trustmebro.xyz>",
+    from: "Trust Me Bro <onboarding@resend.dev>",
     to: toEmail,
     subject: `${borrowerName} accepted your agreement`,
     html: emailShell(`
@@ -119,7 +119,7 @@ export async function sendRepaymentMarkedEmail({
   const safeReason = escapeHtml(reason);
 
   await resend.emails.send({
-    from: "Trust Me Bro <notifications@trustmebro.xyz>",
+    from: "Trust Me Bro <onboarding@resend.dev>",
     to: toEmail,
     subject: `${borrowerName} marked the agreement as repaid`,
     html: emailShell(`
@@ -151,7 +151,7 @@ export async function sendRepaymentConfirmedEmail({
   const safeLenderName = escapeHtml(lenderName);
 
   await resend.emails.send({
-    from: "Trust Me Bro <notifications@trustmebro.xyz>",
+    from: "Trust Me Bro <onboarding@resend.dev>",
     to: toEmail,
     subject: `${lenderName} confirmed your repayment`,
     html: emailShell(`
